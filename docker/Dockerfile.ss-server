@@ -1,0 +1,5 @@
+FROM debian:stable-slim
+RUN apt update &&\
+    apt install -y shadowsocks-libev simple-obfs
+
+CMD ["/usr/bin/ss-server","-c","/etc/shadowsocks.json"]
