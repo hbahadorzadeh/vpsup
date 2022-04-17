@@ -1,0 +1,190 @@
+version: "3.7"
+
+services:
+  poste:
+    container_name: poste
+    image: $POSTE_IMAGE:$POSTE_IMAGE_TAG
+    ports:
+      - "25:25/tcp"
+      - 110:110 
+      - 143:143 
+      - 465:465 
+      - 587:587 
+      - 993:993 
+      - 995:995 
+    environment:
+      # DISABLE_CLAMAV: 'true' # uncomment thie line if you are out of resource
+      TZ: "$TIMEZONE"
+      HTTPS: "OFF"
+    volumes: 
+      - ./data/maildata:/data
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=$POSTE_WEB"
+      - "traefik.http.routers.poste.rule=Host(`mail.$BASE_DOMAIN`)"
+      - "traefik.http.routers.poste.entrypoints=websecure"
+      - "traefik.http.routers.poste.tls.certresolver=letsencrypt"    
+      - "traefik.http.services.poste.loadbalancer.server.port=80"
+  pihole:
+    container_name: pihole
+    image: $PIHOLE_IMAGE:#PIHOLE_IMAGE_TAG
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+    #  - "67:67/udp" # Only required if you are using Pi-hole as your DHCP server
+    environment:
+      TZ: '$TIMEZONE'
+      WEBPASSWORD: '$PIHOLE_PASS'
+    # Volumes store your data between container upgrades
+    volumes:
+      - './data/etc-pihole:/etc/pihole'
+      - './data/etc-dnsmasq.d:/etc/dnsmasq.d'    
+    #   https://github.com/pi-hole/docker-pi-hole#note-on-capabilities
+    # cap_add:
+    #   - NET_ADMIN # Recommended but not required (DHCP needs NET_ADMIN)      
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=$PIHOLE_WEB"
+      - "traefik.http.routers.pihole.rule=Host(`pihole.$BASE_DOMAIN`)"
+      - "traefik.http.routers.pihole.entrypoints=websecure"
+      - "traefik.http.routers.pihole.tls.certresolver=letsencrypt"    
+      - "traefik.http.services.pihole.loadbalancer.server.port=80"
+  wireguard:
+    container_name: wg-manager
+    image: $WIREGUARD_IMAGE:$WIREGUARD_TAG
+    restart: always
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: 0  # Required for IPV6
+    cap_add:
+      - NET_ADMIN
+    #network_mode: host # Alternatively
+    ports:
+       - 51800-51900:51800-51900/udp
+    volumes:
+      - ./data/wg-manager:/config
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8888
+      ADMIN_USERNAME: $WIREGUARD_USER
+      ADMIN_PASSWORD: $WIREGUARD_PASS
+      WEB_CONCURRENCY: 1        
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wireguard.rule=Host(`wg.$BASE_DOMAIN`)"
+      - "traefik.http.routers.wireguard.entrypoints=websecure"
+      - "traefik.http.routers.wireguard.tls.certresolver=letsencrypt"
+      - "traefik.http.services.wireguard.loadbalancer.server.port=8888"
+#  ocserv:
+#    image: vimagick/ocserv
+#    ports:
+#      - "4443:443/tcp"
+#      - "4443:443/udp"
+#    environment:
+#      - VPN_DOMAIN=vpn.easypi.pro
+#      - VPN_NETWORK=10.20.30.0
+#      - VPN_NETMASK=255.255.255.0
+#      - LAN_NETWORK=192.168.0.0
+#      - LAN_NETMASK=255.255.0.0
+#      - VPN_USERNAME=username
+#      - VPN_PASSWORD=password
+#    cap_add:
+#      - NET_ADMIN
+#    restart: unless-stopped
+#    labels:
+#      - "traefik.enable=true"
+#      - "traefik.http.routers.librespeed.rule=Host(`wg.$BASE_DOMAIN`)"
+#      - "traefik.http.routers.librespeed.entrypoints=websecure"
+#      - "traefik.http.routers.librespeed.tls.certresolver=letsencrypt"
+#      - "traefik.http.services.my-service.loadbalancer.server.port=8080"
+  traefik:
+    image: $TRAEFIK_IMAGE:$TRAEFIK_TAG
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      # Tell Traefik to discover containers using the Docker API
+      - --providers.docker=true
+      # Enable the Trafik dashboard
+      - --api.dashboard=true
+      # Set up LetsEncrypt
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare
+      - --certificatesresolvers.letsencrypt.acme.email=$TRAEFIK_CLOUDFLARE_EMAIL
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      # Set up an insecure listener that redirects all traffic to TLS
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      # Set up the TLS configuration for our websecure listener
+      - --entrypoints.websecure.http.tls=true
+      - --entrypoints.websecure.http.tls.certResolver=letsencrypt
+      - --entrypoints.websecure.http.tls.domains[0].main=$BASE_DOMAIN
+      - --entrypoints.websecure.http.tls.domains[0].sans=*.$BASE_DOMAIN
+    environment:
+      - CLOUDFLARE_EMAIL=$TRAEFIK_CLOUDFLARE_EMAIL
+      - CLOUDFLARE_DNS_API_TOKEN=$TRAEFIK_CLOUDFLARE_DNS_API_TOKEN
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./data/certs:/letsencrypt
+#    labels:
+#      - "traefik.enable=true"
+#      - 'traefik.http.routers.traefik.rule=Host(`traefik.$BASE_DOMAIN`)'
+#      - "traefik.http.routers.traefik.entrypoints=websecure"
+#      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
+#      - "traefik.http.routers.traefik.service=api@internal"
+#      - 'traefik.http.routers.traefik.middlewares=strip'
+#      - 'traefik.http.middlewares.strip.stripprefix.prefixes=/traefik'
+#      - 'traefik.http.middlewares.test-auth.basicauth.users=admin:$$apr1$$3FExR1Sz$O829PSD.kX/zZ/qO0KWGz/'
+  whoami:
+    image: "$TRAEFIK_WHOAMI_IAMGE:$TRAEFIK_WHOAMI_TAG"
+    container_name: "whoami"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whoami.rule=Host(`whoami.$BASE_DOMAIN`)"
+      - "traefik.http.routers.whoami.entrypoints=websecure"
+      - "traefik.http.routers.whoami.tls.certresolver=letsencrypt"
+  shadowsocks:
+    container_name: ss-server
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.ss-server
+      #sysctls:
+            #  net.ipv6.conf.all.disable_ipv6: 0  # Required for IPV6
+    network_mode: host
+    volumes:
+      - ./ss-config.json:/etc/shadowsocks.json
+    ports:
+      - 8443:8443
+  deluge:
+    image: lscr.io/linuxserver/deluge
+    container_name: deluge
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=$TIMEZONE
+    volumes:
+      - ./data/downloads:/downloads
+    ports:
+      - 6881:6881
+      - 6881:6881/udp
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.deluge.rule=Host(`deluge.$BASE_DOMAIN`)"
+      - "traefik.http.routers.deluge.entrypoints=websecure"
+      - "traefik.http.routers.deluge.tls.certresolver=letsencrypt"
+      - "traefik.http.services.deluge.loadbalancer.server.port=8112"
+  nginx:
+    image: flashspys/nginx-static
+    container_name: nginx
+    volumes:
+      - ./data/downloads:/static
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nginx.rule=Host(`dl.$BASE_DOMAIN`)"
+      - "traefik.http.routers.nginx.entrypoints=websecure"
+      - "traefik.http.routers.nginx.tls.certresolver=letsencrypt"
+      - "traefik.http.services.nginx.loadbalancer.server.port=80"
