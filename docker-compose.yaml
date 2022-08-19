@@ -105,6 +105,7 @@ services:
       - --providers.docker=true
       # Enable the Trafik dashboard
       - --api.dashboard=true
+      - --providers.docker.exposedbydefault=false
       # Set up LetsEncrypt
       - --certificatesresolvers.letsencrypt.acme.dnschallenge=true
       - --certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare
@@ -129,15 +130,13 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./data/certs:/letsencrypt
-#    labels:
-#      - "traefik.enable=true"
-#      - 'traefik.http.routers.traefik.rule=Host(`traefik.$BASE_DOMAIN`)'
-#      - "traefik.http.routers.traefik.entrypoints=websecure"
-#      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
-#      - "traefik.http.routers.traefik.service=api@internal"
-#      - 'traefik.http.routers.traefik.middlewares=strip'
-#      - 'traefik.http.middlewares.strip.stripprefix.prefixes=/traefik'
-#      - 'traefik.http.middlewares.test-auth.basicauth.users=admin:$$apr1$$3FExR1Sz$O829PSD.kX/zZ/qO0KWGz/'
+    labels:
+      traefik.enable: true
+      traefik.http.routers.dashboard.rule: Host(`dash.$BASE_DOMAIN`)
+      traefik.http.routers.dashboard.service: api@internal
+      traefik.http.routers.dashboard.middlewares: auth
+      traefik.http.middlewares.auth.basicauth.users:  $TRAEFIK_DASHBOARD_BASIC_AUTH # user/password
+
   whoami:
     image: "$TRAEFIK_WHOAMI_IAMGE:$TRAEFIK_WHOAMI_TAG"
     container_name: "whoami"
